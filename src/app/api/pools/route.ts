@@ -95,15 +95,14 @@ async function getEthosScore(address: string): Promise<{ score: number | null; e
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      console.warn(`WARN ethos.failed addr=${address} status=${response.status}`);
-      return { score: null, error: `ethos: ${response.status}` };
+      console.warn("ethos.failed", address);
+      return { score: null, error: "ethos_unavailable" };
     }
     const data = await response.json();
     return { score: data.score ?? null, error: null };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "unknown";
-    console.warn(`WARN ethos.failed addr=${address} err=${msg}`);
-    return { score: null, error: `ethos: ${msg}` };
+  } catch {
+    console.warn("ethos.failed", address);
+    return { score: null, error: "ethos_unavailable" };
   }
 }
 

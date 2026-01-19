@@ -37,6 +37,7 @@ interface CreatorPool {
 interface CreatorHistory {
   creator: string;
   creatorScore: number | null;
+  scoreError: string | null;
   totalPools: number;
   pools: CreatorPool[];
 }
@@ -220,9 +221,12 @@ export function PoolCard({ pool }: PoolCardProps) {
                   <div className="flex items-center gap-4 text-sm">
                     <span>
                       Score:{" "}
-                      <span className={getScoreColor(creatorHistory.creatorScore, false)}>
-                        {creatorHistory.creatorScore ?? "N/A"}
+                      <span className={getScoreColor(creatorHistory.creatorScore, !!creatorHistory.scoreError)}>
+                        {creatorHistory.scoreError ? "N/A" : creatorHistory.creatorScore ?? "—"}
                       </span>
+                      {creatorHistory.scoreError && (
+                        <span className="text-xs text-muted-foreground ml-1">(Ethos unavailable)</span>
+                      )}
                     </span>
                     <span>Total pools: {creatorHistory.totalPools}</span>
                   </div>

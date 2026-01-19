@@ -70,17 +70,29 @@ async function getTransactionSender(client: ReturnType<typeof createClient>, txH
   }
 }
 
-async function getEthosScore(address: string): Promise<number | null> {
+async function getEthosScore(address: string): Promise<{ score: number | null; error: string | null }> {
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
     const response = await fetch(
       `https://api.ethos.network/api/v2/score/address?address=${address}`,
-      { headers: { "X-Ethos-Client": "redflag" } }
+      {
+        headers: { "X-Ethos-Client": "redflag" },
+        signal: controller.signal,
+      }
     );
-    if (!response.ok) return null;
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      console.warn("ethos.failed", address);
+      return { score: null, error: "ethos_unavailable" };
+    }
     const data = await response.json();
-    return data.score ?? null;
+    return { score: data.score ?? null, error: null };
   } catch {
-    return null;
+    console.warn("ethos.failed", address);
+    return { score: null, error: "ethos_unavailable" };
   }
 }
 
@@ -162,13 +174,14 @@ export async function GET(
       creatorPools.sort((a, b) => b.blockNumber - a.blockNumber);
 
       // Get Ethos score for the creator
-      const creatorScore = await getEthosScore(targetAddress);
+      const { score: creatorScore, error: scoreError } = await getEthosScore(targetAddress);
 
       console.log(`INFO creator.pools.fetched addr=${targetAddress} count=${creatorPools.length}`);
 
       return NextResponse.json({
         creator: targetAddress,
         creatorScore,
+        scoreError,
         totalPools: creatorPools.length,
         pools: creatorPools,
       });
@@ -182,6 +195,7 @@ export async function GET(
   return NextResponse.json({
     creator: targetAddress,
     creatorScore: null,
+    scoreError: "ethos_unavailable",
     totalPools: 0,
     pools: [],
     error: "Failed to fetch creator pools",
