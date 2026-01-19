@@ -51,14 +51,21 @@ export function PoolCard({
       onClick={handleClick}
     >
       <div className="flex items-center gap-4">
-        <div className="flex-shrink-0 w-16 text-center">
+        {/* Creator Score with tooltip */}
+        <div
+          className="flex-shrink-0 w-20 text-center"
+          title="Creator Score (Ethos): Reputation score of the address that deployed this pool. This is NOT a token audit or safety guarantee."
+        >
           <span className={`text-3xl font-bold ${getScoreColor(ethosScore)}`}>
             {ethosScore !== null ? ethosScore : "N/A"}
           </span>
+          <div className="text-[10px] text-muted-foreground mt-0.5">
+            Creator Score
+          </div>
         </div>
 
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-sm text-muted-foreground">
               {formatAddress(deployer)}
             </span>
@@ -67,7 +74,7 @@ export function PoolCard({
             </span>
             {ethosScore !== null && ethosScore > 1400 && (
               <Badge className="bg-green-500/20 text-green-500 hover:bg-green-500/30 border-0">
-                VERIFIED
+                REPUTABLE
               </Badge>
             )}
           </div>
