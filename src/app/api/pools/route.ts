@@ -13,8 +13,8 @@ const RPC_ENDPOINTS = [
 ];
 
 // Simple in-memory cache (60 seconds)
-let cache: { data: PoolData[]; timestamp: number } | null = null;
-const CACHE_TTL = 60 * 1000; // 60 seconds
+const cache = new Map<string, { data: PoolData[]; timestamp: number }>();
+const CACHE_TTL = 60_000; // 60 seconds
 
 function createClient(rpcUrl: string) {
   return createPublicClient({
@@ -23,7 +23,6 @@ function createClient(rpcUrl: string) {
   });
 }
 
-// Exact Aerodrome PoolCreated event signature
 const poolCreatedEvent = parseAbiItem(
   "event PoolCreated(address indexed token0, address indexed token1, bool indexed stable, address pool, uint256)"
 );
@@ -34,12 +33,19 @@ interface PoolData {
   token1: string;
   token0Symbol: string;
   token1Symbol: string;
+  pair: string;
   stable: boolean;
-  deployer: string;
+  creator: string;
+  creatorShort: string;
+  creatorScore: number | null;
+  scoreSource: string;
+  scoreError: string | null;
+  blockNumber: number;
   timestamp: number;
-  ethosScore: number | null;
-  blockNumber: string;
-  transactionHash: string;
+  timeAgo: string;
+  txHash: string;
+  basescanLink: string;
+  isFirstPoolByCreator: boolean;
 }
 
 interface PoolLog {
@@ -48,19 +54,24 @@ interface PoolLog {
   transactionHash: `0x${string}` | null;
 }
 
+function formatTimeAgo(timestamp: number): string {
+  const now = Math.floor(Date.now() / 1000);
+  const diff = now - timestamp;
+  if (diff < 60) return `${diff}s`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
+  return `${Math.floor(diff / 86400)}d`;
+}
+
+function shortenAddress(address: string): string {
+  return `${address.slice(0, 6)}...${address.slice(-3)}`;
+}
+
 async function getTokenSymbol(client: ReturnType<typeof createClient>, address: string): Promise<string> {
   try {
     const symbol = await client.readContract({
       address: address as `0x${string}`,
-      abi: [
-        {
-          name: "symbol",
-          type: "function",
-          stateMutability: "view",
-          inputs: [],
-          outputs: [{ type: "string" }],
-        },
-      ],
+      abi: [{ name: "symbol", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] }],
       functionName: "symbol",
     });
     return symbol as string;
@@ -69,52 +80,56 @@ async function getTokenSymbol(client: ReturnType<typeof createClient>, address: 
   }
 }
 
-async function getEthosScore(address: string): Promise<number | null> {
+async function getEthosScore(address: string): Promise<{ score: number | null; error: string | null }> {
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
+
     const response = await fetch(
       `https://api.ethos.network/api/v2/score/address?address=${address}`,
       {
-        headers: {
-          "X-Ethos-Client": "redflag",
-        },
+        headers: { "X-Ethos-Client": "redflag" },
+        signal: controller.signal,
       }
     );
+    clearTimeout(timeoutId);
+
     if (!response.ok) {
-      return null;
+      console.warn(`WARN ethos.failed addr=${address} status=${response.status}`);
+      return { score: null, error: `ethos: ${response.status}` };
     }
     const data = await response.json();
-    return data.score ?? null;
-  } catch {
-    return null;
+    return { score: data.score ?? null, error: null };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "unknown";
+    console.warn(`WARN ethos.failed addr=${address} err=${msg}`);
+    return { score: null, error: `ethos: ${msg}` };
   }
 }
 
 async function getTransactionSender(client: ReturnType<typeof createClient>, txHash: string): Promise<string> {
   try {
-    const receipt = await client.getTransactionReceipt({
-      hash: txHash as `0x${string}`,
-    });
+    const receipt = await client.getTransactionReceipt({ hash: txHash as `0x${string}` });
     return receipt.from;
   } catch {
     return "0x0000000000000000000000000000000000000000";
   }
 }
 
-async function fetchLogsWithFallback(): Promise<{ logs: PoolLog[]; client: ReturnType<typeof createClient> } | null> {
+async function fetchLogsWithFallback(): Promise<{ logs: PoolLog[]; client: ReturnType<typeof createClient>; fromBlock: bigint; toBlock: bigint } | null> {
   for (const rpcUrl of RPC_ENDPOINTS) {
-    console.log(`Trying RPC: ${rpcUrl}`);
+    console.log(`INFO rpc.trying url=${rpcUrl}`);
     const client = createClient(rpcUrl);
 
     try {
       const currentBlock = await client.getBlockNumber();
-      console.log(`  Current block: ${currentBlock.toString()}`);
-
-      // Collect logs from multiple smaller ranges to get more pools
       const allLogs: PoolLog[] = [];
       const rangeSize = BigInt(2000);
       const totalRange = BigInt(100000);
+      let minBlock = currentBlock;
+      let maxBlock = BigInt(0);
 
-      for (let offset = BigInt(0); offset < totalRange && allLogs.length < 20; offset += rangeSize) {
+      for (let offset = BigInt(0); offset < totalRange && allLogs.length < 25; offset += rangeSize) {
         const toBlock = currentBlock - offset;
         const fromBlock = toBlock - rangeSize + BigInt(1);
 
@@ -127,21 +142,21 @@ async function fetchLogsWithFallback(): Promise<{ logs: PoolLog[]; client: Retur
           });
 
           if (logs.length > 0) {
-            console.log(`  Found ${logs.length} logs in range ${fromBlock.toString()}-${toBlock.toString()}`);
             allLogs.push(...(logs as unknown as PoolLog[]));
+            if (fromBlock < minBlock) minBlock = fromBlock;
+            if (toBlock > maxBlock) maxBlock = toBlock;
           }
         } catch {
-          console.log(`  Range failed, skipping...`);
           continue;
         }
       }
 
       if (allLogs.length > 0) {
-        return { logs: allLogs, client };
+        console.log(`INFO rpc.success url=${rpcUrl} logs=${allLogs.length}`);
+        return { logs: allLogs, client, fromBlock: minBlock, toBlock: maxBlock };
       }
-
     } catch (err) {
-      console.log(`  RPC failed: ${err}`);
+      console.warn(`WARN rpc.failed url=${rpcUrl} err=${err}`);
       continue;
     }
   }
@@ -151,42 +166,56 @@ async function fetchLogsWithFallback(): Promise<{ logs: PoolLog[]; client: Retur
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  console.log("=== API /api/pools called ===");
+  const cacheKey = "pools_latest";
+  const cached = cache.get(cacheKey);
 
-  // Check cache first
-  if (cache && Date.now() - cache.timestamp < CACHE_TTL) {
-    console.log("Returning cached data");
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    console.log("INFO cache.hit");
     return NextResponse.json({
-      pools: cache.data,
-      lastUpdated: cache.timestamp,
+      pools: cached.data,
+      lastUpdated: cached.timestamp,
       cached: true,
     });
   }
+
+  console.log("INFO pools.fetch started");
 
   try {
     const result = await fetchLogsWithFallback();
 
     if (!result || result.logs.length === 0) {
-      console.log("No logs found from any RPC");
-      return NextResponse.json({ pools: [], lastUpdated: Date.now() });
+      console.log("INFO pools.fetched count=0");
+      return NextResponse.json({ pools: [], lastUpdated: Date.now(), cached: false });
     }
 
-    const { logs, client } = result;
-    console.log(`Total logs found: ${logs.length}`);
+    const { logs, client, fromBlock, toBlock } = result;
 
-    // CRITICAL: Sort by blockNumber DESC (newest first) BEFORE slicing
+    // Sort by blockNumber DESC
     logs.sort((a, b) => Number(b.blockNumber) - Number(a.blockNumber));
-
-    // Take first 15 (newest pools)
     const recentLogs = logs.slice(0, 15);
-    console.log(`Processing ${recentLogs.length} newest pools`);
-    console.log(`Block range: ${recentLogs[0]?.blockNumber.toString()} to ${recentLogs[recentLogs.length - 1]?.blockNumber.toString()}`);
+
+    // Count pools per creator for isFirstPoolByCreator
+    const creatorPoolCount = new Map<string, number>();
+
+    // First pass: get all creators
+    const creatorsPromises = recentLogs.map(async (log) => {
+      if (!log.transactionHash) return null;
+      return getTransactionSender(client, log.transactionHash);
+    });
+    const creators = await Promise.all(creatorsPromises);
+
+    // Count occurrences in the full logs window
+    for (const log of logs) {
+      if (!log.transactionHash) continue;
+      const creator = await getTransactionSender(client, log.transactionHash);
+      creatorPoolCount.set(creator.toLowerCase(), (creatorPoolCount.get(creator.toLowerCase()) || 0) + 1);
+    }
 
     const poolsData: PoolData[] = [];
 
-    for (const log of recentLogs) {
+    for (let i = 0; i < recentLogs.length; i++) {
+      const log = recentLogs[i];
       try {
-        // Parse args (array format from viem)
         let token0: string, token1: string, stable: boolean, pool: string;
 
         if (Array.isArray(log.args)) {
@@ -196,22 +225,16 @@ export async function GET() {
           ({ token0, token1, stable, pool } = args);
         }
 
-        // Get token symbols
         const [token0Symbol, token1Symbol] = await Promise.all([
           getTokenSymbol(client, token0),
           getTokenSymbol(client, token1),
         ]);
 
-        // Get deployer from transaction receipt
-        const deployer = log.transactionHash
-          ? await getTransactionSender(client, log.transactionHash)
-          : "0x0000000000000000000000000000000000000000";
-
-        // Get block timestamp
+        const creator = creators[i] || "0x0000000000000000000000000000000000000000";
         const block = await client.getBlock({ blockNumber: log.blockNumber });
+        const { score, error } = await getEthosScore(creator);
 
-        // Get Ethos score (may be null)
-        const ethosScore = await getEthosScore(deployer);
+        const isFirstPool = (creatorPoolCount.get(creator.toLowerCase()) || 0) === 1;
 
         poolsData.push({
           pool,
@@ -219,35 +242,40 @@ export async function GET() {
           token1,
           token0Symbol,
           token1Symbol,
+          pair: `${token0Symbol}/${token1Symbol}`,
           stable,
-          deployer,
+          creator,
+          creatorShort: shortenAddress(creator),
+          creatorScore: score,
+          scoreSource: "ethos",
+          scoreError: error,
+          blockNumber: Number(log.blockNumber),
           timestamp: Number(block.timestamp),
-          ethosScore,
-          blockNumber: log.blockNumber.toString(),
-          transactionHash: log.transactionHash || "",
+          timeAgo: formatTimeAgo(Number(block.timestamp)),
+          txHash: log.transactionHash || "",
+          basescanLink: `https://basescan.org/tx/${log.transactionHash}`,
+          isFirstPoolByCreator: isFirstPool,
         });
-
-        console.log(`  Processed: ${token0Symbol}/${token1Symbol} (block ${log.blockNumber.toString()})`);
       } catch (err) {
-        console.error(`  Failed to process pool:`, err);
+        console.error(`WARN pool.process.failed err=${err}`);
         continue;
       }
     }
 
-    // Update cache
     const now = Date.now();
-    cache = { data: poolsData, timestamp: now };
+    cache.set(cacheKey, { data: poolsData, timestamp: now });
 
-    console.log(`Returning ${poolsData.length} pools`);
+    console.log(`INFO pools.fetched count=${poolsData.length} blocks=${fromBlock}-${toBlock}`);
+
     return NextResponse.json({
       pools: poolsData,
       lastUpdated: now,
       cached: false,
     });
   } catch (error) {
-    console.error("FATAL ERROR:", error);
+    console.error(`ERROR pools.fetch err=${error}`);
     return NextResponse.json(
-      { error: "Failed to fetch pools", details: String(error), pools: [] },
+      { error: "Failed to fetch pools", pools: [], lastUpdated: Date.now() },
       { status: 500 }
     );
   }

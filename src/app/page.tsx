@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { PoolCard } from "@/components/PoolCard";
@@ -11,12 +11,19 @@ interface Pool {
   token1: string;
   token0Symbol: string;
   token1Symbol: string;
+  pair: string;
   stable: boolean;
-  deployer: string;
+  creator: string;
+  creatorShort: string;
+  creatorScore: number | null;
+  scoreSource: string;
+  scoreError: string | null;
+  blockNumber: number;
   timestamp: number;
-  ethosScore: number | null;
-  blockNumber: string;
-  transactionHash: string;
+  timeAgo: string;
+  txHash: string;
+  basescanLink: string;
+  isFirstPoolByCreator: boolean;
 }
 
 interface ApiResponse {
@@ -24,6 +31,8 @@ interface ApiResponse {
   lastUpdated: number;
   cached?: boolean;
 }
+
+type SortOption = "newest" | "lowestScore" | "firstTime";
 
 async function fetchPools(): Promise<ApiResponse> {
   const response = await fetch("/api/pools");
@@ -34,7 +43,6 @@ async function fetchPools(): Promise<ApiResponse> {
 function formatLastUpdated(timestamp: number): string {
   const now = Date.now();
   const diff = Math.floor((now - timestamp) / 1000);
-
   if (diff < 60) return "just now";
   if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)} hours ago`;
@@ -42,28 +50,51 @@ function formatLastUpdated(timestamp: number): string {
 }
 
 export default function Home() {
-  const [filterLowScore, setFilterLowScore] = useState(false);
+  const [sortBy, setSortBy] = useState<SortOption>("newest");
 
-  const {
-    data,
-    isLoading,
-    isError,
-    refetch,
-    isFetching,
-  } = useQuery({
+  // Load sort preference from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem("redflag-sort");
+    console.log('[DEBUG] localStorage redflag-sort:', saved);
+    if (saved && ["newest", "lowestScore", "firstTime"].includes(saved)) {
+      setSortBy(saved as SortOption);
+    }
+  }, []);
+
+  // Save sort preference
+  useEffect(() => {
+    localStorage.setItem("redflag-sort", sortBy);
+  }, [sortBy]);
+
+  const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ["pools"],
     queryFn: fetchPools,
     refetchInterval: 60 * 60 * 1000, // 1 hour
     refetchIntervalInBackground: true,
+    staleTime: 60 * 1000,
+    gcTime: 5 * 60 * 1000,
   });
 
   const pools = data?.pools;
   const lastUpdated = data?.lastUpdated;
 
-  // Filter logic: show all pools when filter is OFF, show only <1200 when ON
-  const filteredPools = filterLowScore
-    ? pools?.filter((pool) => pool.ethosScore !== null && pool.ethosScore < 1200)
-    : pools;
+  // Sort/filter pools based on selection
+  const sortedPools = useMemo(() => {
+    console.log('[DEBUG] raw pools count:', pools?.length);
+    console.log('[DEBUG] sortBy mode:', sortBy);
+    if (!pools) return [];
+    let result = [...pools];
+
+    if (sortBy === "lowestScore") {
+      result.sort((a, b) => (a.creatorScore ?? 9999) - (b.creatorScore ?? 9999));
+    } else if (sortBy === "firstTime") {
+      result = result.filter((p) => p.isFirstPoolByCreator);
+    }
+    // "newest" is already sorted from API
+
+    console.log('[DEBUG] visible pools count:', result.length);
+    return result;
+  }, [pools, sortBy]);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -86,13 +117,43 @@ export default function Home() {
               Ethos
             </a>
           </p>
+
+          {/* Controls */}
           <div className="flex flex-wrap items-center gap-3">
-            <Button
-              variant={filterLowScore ? "default" : "secondary"}
-              onClick={() => setFilterLowScore(!filterLowScore)}
-            >
-              {filterLowScore ? "Showing Low Scores" : "Filter by Score"}
-            </Button>
+            {/* Sort/Filter Buttons */}
+            <div className="flex rounded-lg border border-border overflow-hidden">
+              <button
+                onClick={() => setSortBy("newest")}
+                className={`px-3 py-1.5 text-sm transition-colors ${
+                  sortBy === "newest"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-secondary hover:bg-secondary/80"
+                }`}
+              >
+                Newest
+              </button>
+              <button
+                onClick={() => setSortBy("lowestScore")}
+                className={`px-3 py-1.5 text-sm border-l border-border transition-colors ${
+                  sortBy === "lowestScore"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-secondary hover:bg-secondary/80"
+                }`}
+              >
+                Lowest Score
+              </button>
+              <button
+                onClick={() => setSortBy("firstTime")}
+                className={`px-3 py-1.5 text-sm border-l border-border transition-colors ${
+                  sortBy === "firstTime"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-secondary hover:bg-secondary/80"
+                }`}
+              >
+                First-time
+              </button>
+            </div>
+
             <Button
               variant="secondary"
               onClick={() => refetch()}
@@ -100,9 +161,10 @@ export default function Home() {
             >
               {isFetching ? "Refreshing..." : "Refresh Feed"}
             </Button>
+
             {lastUpdated && !isLoading && (
               <span className="text-xs text-muted-foreground">
-                Last updated: {formatLastUpdated(lastUpdated)}
+                Updated {formatLastUpdated(lastUpdated)}
               </span>
             )}
           </div>
@@ -128,23 +190,19 @@ export default function Home() {
             </div>
           )}
 
-          {!isLoading && filteredPools?.map((pool) => (
-            <PoolCard
-              key={pool.pool}
-              pool={pool.pool}
-              token0Symbol={pool.token0Symbol}
-              token1Symbol={pool.token1Symbol}
-              deployer={pool.deployer}
-              timestamp={pool.timestamp}
-              ethosScore={pool.ethosScore}
-            />
+          {!isLoading && sortedPools.map((pool) => (
+            <PoolCard key={pool.pool} pool={pool} />
           ))}
 
-          {!isLoading && filteredPools?.length === 0 && (
+          {!isLoading && sortedPools.length === 0 && pools && pools.length > 0 && (
             <div className="text-center py-12 text-muted-foreground">
-              {filterLowScore
-                ? "No pools with low creator scores found."
-                : "No pools found."}
+              No first-time creator pools found in the current data.
+            </div>
+          )}
+
+          {!isLoading && (!pools || pools.length === 0) && (
+            <div className="text-center py-12 text-muted-foreground">
+              No recent pools found. Try &quot;Refresh Feed&quot; or check back later.
             </div>
           )}
         </div>
