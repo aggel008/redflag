@@ -1,100 +1,123 @@
-import Image from "next/image";
+"use client";
+
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Button } from "@/components/ui/button";
+import { PoolCard } from "@/components/PoolCard";
+
+interface Pool {
+  pool: string;
+  token0: string;
+  token1: string;
+  token0Symbol: string;
+  token1Symbol: string;
+  stable: boolean;
+  deployer: string;
+  timestamp: number;
+  ethosScore: number | null;
+  blockNumber: string;
+  transactionHash: string;
+}
+
+async function fetchPools(): Promise<Pool[]> {
+  const response = await fetch("/api/pools");
+  if (!response.ok) throw new Error("Failed to fetch pools");
+  const data = await response.json();
+  return data.pools;
+}
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="https://nextjs.org/icons/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+  const [filterLowScore, setFilterLowScore] = useState(false);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="https://nextjs.org/icons/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
+  const {
+    data: pools,
+    isLoading,
+    isError,
+    refetch,
+    isFetching,
+  } = useQuery({
+    queryKey: ["pools"],
+    queryFn: fetchPools,
+  });
+
+  const filteredPools = filterLowScore
+    ? pools?.filter((pool) => pool.ethosScore !== null && pool.ethosScore < 1200)
+    : pools;
+
+  return (
+    <div className="min-h-screen flex flex-col">
+      <header className="border-b border-border px-6 py-8">
+        <div className="max-w-4xl mx-auto">
+          <h1 className="text-4xl font-bold mb-2 flex items-center gap-3">
+            RedFlag <span>&#x1F6A9;</span>
+          </h1>
+          <p className="text-muted-foreground mb-6">
+            Real-time monitoring of on-chain pool activity and reputation scores.
+          </p>
+          <div className="flex gap-3">
+            <Button
+              variant={filterLowScore ? "default" : "secondary"}
+              onClick={() => setFilterLowScore(!filterLowScore)}
+            >
+              Filter by Score
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => refetch()}
+              disabled={isFetching}
+            >
+              {isFetching ? "Refreshing..." : "Refresh Feed"}
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      <main className="flex-1 px-6 py-8">
+        <div className="max-w-4xl mx-auto space-y-3">
+          {isLoading && (
+            <div className="text-center py-12 text-muted-foreground">
+              Loading pools...
+            </div>
+          )}
+
+          {isError && (
+            <div className="text-center py-12 text-red-500">
+              Failed to load pools. Please try again.
+            </div>
+          )}
+
+          {filteredPools?.map((pool) => (
+            <PoolCard
+              key={pool.pool}
+              pool={pool.pool}
+              token0Symbol={pool.token0Symbol}
+              token1Symbol={pool.token1Symbol}
+              deployer={pool.deployer}
+              timestamp={pool.timestamp}
+              ethosScore={pool.ethosScore}
             />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+          ))}
+
+          {filteredPools?.length === 0 && !isLoading && (
+            <div className="text-center py-12 text-muted-foreground">
+              No pools found matching the filter.
+            </div>
+          )}
         </div>
       </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
+
+      <footer className="border-t border-border px-6 py-6">
+        <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-muted-foreground">
+          <span>&copy; 2026 RedFlag &bull; Data refreshed on demand</span>
+          <div className="flex gap-4">
+            <a href="#" className="hover:text-foreground transition-colors">
+              API Docs
+            </a>
+            <a href="#" className="hover:text-foreground transition-colors">
+              Support
+            </a>
+          </div>
+        </div>
       </footer>
     </div>
   );
