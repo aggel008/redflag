@@ -96,6 +96,14 @@ export default function Home() {
     return result;
   }, [pools, sortBy]);
 
+  // Count high-risk pools (score < 1200 or null/no score)
+  const highRiskCount = useMemo(() => {
+    if (!sortedPools) return 0;
+    return sortedPools.filter(
+      (p) => p.creatorScore === null || p.creatorScore < 1200
+    ).length;
+  }, [sortedPools]);
+
   return (
     <div className="min-h-screen flex flex-col">
       <header className="border-b border-border px-6 py-8">
@@ -104,7 +112,7 @@ export default function Home() {
             RedFlag <span>&#x1F6A9;</span>
           </h1>
           <p className="text-muted-foreground mb-2">
-            Monitor recent Aerodrome pool deployments on Base with creator reputation scores.
+            Risk monitoring for Aerodrome pool deployments on Base. Pool creation is rare but significant.
           </p>
           <p className="text-xs text-muted-foreground mb-6">
             Reputation data powered by{" "}
@@ -140,7 +148,7 @@ export default function Home() {
                     : "bg-secondary hover:bg-secondary/80"
                 }`}
               >
-                Lowest Score
+                Highest Risk
               </button>
               <button
                 onClick={() => setSortBy("firstTime")}
@@ -150,7 +158,7 @@ export default function Home() {
                     : "bg-secondary hover:bg-secondary/80"
                 }`}
               >
-                First-time
+                New Deployers
               </button>
             </div>
 
@@ -173,13 +181,38 @@ export default function Home() {
 
       <main className="flex-1 px-6 py-8">
         <div className="max-w-4xl mx-auto space-y-3">
+          {/* Risk Summary Block */}
+          {!isLoading && sortedPools.length > 0 && (
+            <div className={`p-4 rounded-lg border ${
+              highRiskCount > 0
+                ? "bg-red-500/10 border-red-500/30"
+                : "bg-green-500/10 border-green-500/30"
+            }`}>
+              <div className="flex items-center gap-2">
+                <span className="text-lg">🚩</span>
+                <span className={`font-semibold ${highRiskCount > 0 ? "text-red-400" : "text-green-400"}`}>
+                  {highRiskCount > 0
+                    ? `${highRiskCount} high-risk pool${highRiskCount === 1 ? "" : "s"} detected in the last 72 hours`
+                    : "No high-risk pools detected in current view"
+                  }
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                High risk: creator score below 1200 or no reputation history
+              </p>
+              <p className="text-[11px] text-muted-foreground/70 mt-2 italic">
+                High-risk ≠ scam. It indicates limited or weak reputation signals at deployment time.
+              </p>
+            </div>
+          )}
+
           {isLoading && (
             <div className="text-center py-12">
               <div className="text-muted-foreground mb-2">
-                Indexing recent pools...
+                Scanning for pool deployments...
               </div>
               <div className="text-xs text-muted-foreground">
-                First load may take up to ~20 seconds while fetching blockchain data.
+                Fetching blockchain data and creator reputation scores.
               </div>
             </div>
           )}
@@ -196,13 +229,15 @@ export default function Home() {
 
           {!isLoading && sortedPools.length === 0 && pools && pools.length > 0 && (
             <div className="text-center py-12 text-muted-foreground">
-              No first-time creator pools found in the current data.
+              <div className="mb-2">No first-time creator pools match current filters.</div>
+              <div className="text-xs">All pools in this window are from known deployers.</div>
             </div>
           )}
 
           {!isLoading && (!pools || pools.length === 0) && (
             <div className="text-center py-12 text-muted-foreground">
-              No recent pools found. Try &quot;Refresh Feed&quot; or check back later.
+              <div className="mb-2">No pool deployments detected in monitoring window.</div>
+              <div className="text-xs">New pool creation on Aerodrome is infrequent. This is normal.</div>
             </div>
           )}
         </div>

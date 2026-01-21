@@ -59,6 +59,85 @@ function getScoreTooltip(score: number | null, error: string | null): string {
   return "Ethos reputation score of the address that created this pool. This is NOT a token audit.";
 }
 
+interface RiskLabel {
+  text: string;
+  colorClass: string;
+  bgClass: string;
+}
+
+function getRiskLabel(score: number | null, hasError: boolean): RiskLabel {
+  if (hasError) {
+    return { text: "Unknown Risk", colorClass: "text-gray-400", bgClass: "bg-gray-500/20" };
+  }
+  if (score === null) {
+    return { text: "High Risk", colorClass: "text-red-400", bgClass: "bg-red-500/20" };
+  }
+  if (score < 1200) {
+    return { text: "High Risk", colorClass: "text-red-400", bgClass: "bg-red-500/20" };
+  }
+  if (score <= 1400) {
+    return { text: "Medium Risk", colorClass: "text-yellow-400", bgClass: "bg-yellow-500/20" };
+  }
+  return { text: "Low Risk", colorClass: "text-green-400", bgClass: "bg-green-500/20" };
+}
+
+function getRiskExplanation(pool: Pool): string {
+  if (pool.scoreError) {
+    return "Unable to verify creator reputation";
+  }
+  if (pool.creatorScore === null) {
+    return "No previous Ethos history";
+  }
+  if (pool.isFirstPoolByCreator && pool.creatorScore < 1200) {
+    return "First pool by low-reputation deployer";
+  }
+  if (pool.isFirstPoolByCreator) {
+    return "First pool by this address";
+  }
+  if (pool.creatorScore < 1200) {
+    return "Low reputation deployer";
+  }
+  if (pool.creatorScore <= 1400) {
+    return "Moderate reputation deployer";
+  }
+  return "Established deployer";
+}
+
+type CoverageLevel = "Sparse" | "Partial" | "Established";
+
+function getReputationCoverage(pool: Pool): CoverageLevel {
+  // Sparse: no score or first pool
+  if (pool.creatorScore === null || pool.scoreError || pool.isFirstPoolByCreator) {
+    return "Sparse";
+  }
+  // Established: score > 1400 and not first pool
+  if (pool.creatorScore > 1400) {
+    return "Established";
+  }
+  // Partial: score exists but limited history
+  return "Partial";
+}
+
+function getEthosProfileUrl(address: string): string {
+  return `https://app.ethos.network/profile/${address}`;
+}
+
+function getCoverageTooltip(coverage: CoverageLevel): string {
+  switch (coverage) {
+    case "Sparse":
+      return "Limited or no prior reputation signals";
+    case "Partial":
+      return "Some reputation signals, limited history";
+    case "Established":
+      return "Consistent reputation history on Ethos";
+  }
+}
+
+function hasEthosProfile(pool: Pool): boolean {
+  // Profile exists if we have a score and no error
+  return pool.creatorScore !== null && !pool.scoreError;
+}
+
 export function PoolCard({ pool }: PoolCardProps) {
   const [showAlertModal, setShowAlertModal] = useState(false);
   const [showCreatorModal, setShowCreatorModal] = useState(false);
@@ -100,6 +179,12 @@ export function PoolCard({ pool }: PoolCardProps) {
   };
 
   const hasScoreError = !!pool.scoreError;
+  const riskLabel = getRiskLabel(pool.creatorScore, hasScoreError);
+  const riskExplanation = getRiskExplanation(pool);
+  const coverageLevel = getReputationCoverage(pool);
+  const coverageTooltip = getCoverageTooltip(coverageLevel);
+  const ethosProfileUrl = getEthosProfileUrl(pool.creator);
+  const hasProfile = hasEthosProfile(pool);
 
   return (
     <>
@@ -108,17 +193,45 @@ export function PoolCard({ pool }: PoolCardProps) {
         onClick={handleCardClick}
       >
         <div className="flex items-center gap-4">
-          {/* Creator Score */}
+          {/* Creator Score & Risk Label */}
           <div
-            className="flex-shrink-0 w-20 text-center"
+            className="flex-shrink-0 w-28 text-center"
             title={getScoreTooltip(pool.creatorScore, pool.scoreError)}
           >
-            <span className={`text-3xl font-bold ${getScoreColor(pool.creatorScore, hasScoreError)}`}>
+            <div className={`text-[10px] font-semibold px-2 py-0.5 rounded-full inline-block mb-1 ${riskLabel.bgClass} ${riskLabel.colorClass}`}>
+              {riskLabel.text}
+            </div>
+            <span className={`text-3xl font-bold block ${getScoreColor(pool.creatorScore, hasScoreError)}`}>
               {hasScoreError ? "N/A" : pool.creatorScore !== null ? pool.creatorScore : "—"}
             </span>
             <div className="text-[10px] text-muted-foreground mt-0.5">
-              Creator Score
+              {riskExplanation}
             </div>
+            <div
+              className="text-[9px] text-muted-foreground/70 mt-1 cursor-help"
+              title={coverageTooltip}
+            >
+              Coverage: {coverageLevel}
+            </div>
+            {hasProfile ? (
+              <a
+                data-no-navigate
+                href={ethosProfileUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="text-[9px] text-blue-400/80 hover:text-blue-400 hover:underline mt-1 inline-block"
+              >
+                View on Ethos →
+              </a>
+            ) : (
+              <span
+                className="text-[9px] text-muted-foreground/50 mt-1 inline-block cursor-help"
+                title="This address has no reputation profile on Ethos yet"
+              >
+                No Ethos profile yet
+              </span>
+            )}
           </div>
 
           {/* Middle section */}

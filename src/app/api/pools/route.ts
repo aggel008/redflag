@@ -1,15 +1,29 @@
-import { createPublicClient, http, parseAbiItem } from "viem";
+import { createPublicClient, http, decodeEventLog, parseAbiItem } from "viem";
 import { base } from "viem/chains";
 import { NextResponse } from "next/server";
 
 const AERODROME_FACTORY = "0x420DD381b31aEf6683db6B902084cB0FFEcE40Da" as const;
 
-// Multiple RPC endpoints for fallback
+// Full ABI for PoolCreated event - needed for proper decoding
+const POOL_FACTORY_ABI = [
+  {
+    type: "event",
+    name: "PoolCreated",
+    inputs: [
+      { name: "token0", type: "address", indexed: true },
+      { name: "token1", type: "address", indexed: true },
+      { name: "stable", type: "bool", indexed: true },
+      { name: "pool", type: "address", indexed: false },
+      { name: "index", type: "uint256", indexed: false },
+    ],
+  },
+] as const;
+
+// Multiple RPC endpoints for fallback (drpc first - allows larger block ranges)
 const RPC_ENDPOINTS = [
-  "https://base.llamarpc.com",
-  "https://1rpc.io/base",
   "https://base.drpc.org",
-  "https://base-mainnet.g.alchemy.com/v2/HMpamZi2-H1ZmqHf-01s-",
+  "https://1rpc.io/base",
+  "https://base.llamarpc.com",
 ];
 
 // Simple in-memory cache (60 seconds)
@@ -49,7 +63,13 @@ interface PoolData {
 }
 
 interface PoolLog {
-  args: unknown;
+  args: {
+    token0: `0x${string}`;
+    token1: `0x${string}`;
+    stable: boolean;
+    pool: `0x${string}`;
+    index: bigint;
+  };
   blockNumber: bigint;
   transactionHash: `0x${string}` | null;
 }
@@ -122,13 +142,15 @@ async function fetchLogsWithFallback(): Promise<{ logs: PoolLog[]; client: Retur
 
     try {
       const currentBlock = await client.getBlockNumber();
+      console.log(`INFO rpc.block current=${currentBlock}`);
       const allLogs: PoolLog[] = [];
-      const rangeSize = BigInt(2000);
-      const totalRange = BigInt(100000);
+      const rangeSize = BigInt(900); // Safe for all RPCs (most have 1k limit)
+      const totalRange = BigInt(200000); // ~5.5 days of blocks
       let minBlock = currentBlock;
       let maxBlock = BigInt(0);
+      let failedChunks = 0;
 
-      for (let offset = BigInt(0); offset < totalRange && allLogs.length < 25; offset += rangeSize) {
+      for (let offset = BigInt(0); offset < totalRange && allLogs.length < 50; offset += rangeSize) {
         const toBlock = currentBlock - offset;
         const fromBlock = toBlock - rangeSize + BigInt(1);
 
@@ -141,11 +163,33 @@ async function fetchLogsWithFallback(): Promise<{ logs: PoolLog[]; client: Retur
           });
 
           if (logs.length > 0) {
-            allLogs.push(...(logs as unknown as PoolLog[]));
+            // Decode each log properly using the full ABI
+            for (const log of logs) {
+              try {
+                const decoded = decodeEventLog({
+                  abi: POOL_FACTORY_ABI,
+                  data: log.data,
+                  topics: log.topics,
+                });
+                allLogs.push({
+                  args: decoded.args as PoolLog["args"],
+                  blockNumber: log.blockNumber,
+                  transactionHash: log.transactionHash,
+                });
+              } catch {
+                // Skip malformed logs
+              }
+            }
             if (fromBlock < minBlock) minBlock = fromBlock;
             if (toBlock > maxBlock) maxBlock = toBlock;
+            console.log(`INFO rpc.chunk from=${fromBlock} to=${toBlock} found=${logs.length}`);
           }
         } catch {
+          failedChunks++;
+          if (failedChunks > 10) {
+            console.warn(`WARN rpc.tooManyFails url=${rpcUrl}`);
+            break; // Try next RPC
+          }
           continue;
         }
       }
@@ -215,14 +259,7 @@ export async function GET() {
     for (let i = 0; i < recentLogs.length; i++) {
       const log = recentLogs[i];
       try {
-        let token0: string, token1: string, stable: boolean, pool: string;
-
-        if (Array.isArray(log.args)) {
-          [token0, token1, stable, pool] = log.args as [string, string, boolean, string];
-        } else {
-          const args = log.args as { token0: string; token1: string; stable: boolean; pool: string };
-          ({ token0, token1, stable, pool } = args);
-        }
+        const { token0, token1, stable, pool } = log.args;
 
         const [token0Symbol, token1Symbol] = await Promise.all([
           getTokenSymbol(client, token0),
