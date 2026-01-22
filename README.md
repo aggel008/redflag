@@ -1,36 +1,28 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# RedFlag 🚩
 
-## Getting Started
+Real-time risk monitoring for Aerodrome pool deployments on Base, powered by Ethos reputation scoring.
 
-First, run the development server:
+## Overview
+RedFlag is a security-focused monitor designed to filter on-chain noise during new liquidity pool deployments. By integrating Ethos Network reputation data, the platform provides an instant visibility layer, helping users distinguish between verified builders and high-risk, anonymous deployments.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## Demo
+🎥 [Watch the 2-minute project walkthrough](https://youtu.be/ybLhDGkyTZ4)
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## The Problem
+When new pools are deployed on Aerodrome (Base), there is often a lack of immediate information about the creator. Anonymous EOAs can deploy pools without any prior reputation, creating a high-risk environment for liquidity providers and traders.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Our Solution: How it leverages Ethos
+RedFlag connects real-time Aerodrome factory events with the Ethos reputation engine:
+* Real-time Monitoring: Tracks every new pool deployment on the Aerodrome protocol.
+* Identity Verification: Automatically fetches the creator's EOA reputation score from Ethos.
+* Risk Classification: Signals low-risk deployments when a high Ethos score (e.g., 1400+) or verified identity is detected.
+* Transparency: Surfaces structural signals (like first-ever deployments) backed by community reputation instead of just algorithmic guesses.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Tech Stack
+* Frontend: Next.js, Tailwind CSS
+* Identity: Ethos Network (Reputation API & On-chain data)
+* Network: Base
+* DeFi Infrastructure: Aerodrome Protocol
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+---
+Built for the Ethos Vibeathon 2026.
